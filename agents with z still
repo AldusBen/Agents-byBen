@@ -1,0 +1,205 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.spatial import distance
+
+# Previous functions remain the same
+def create_agent(is_male):
+    array = np.zeros((32, 32))
+    coords = []
+    spots1 = np.random.choice(32*32, 5, replace=False)
+    spots2 = np.random.choice(32*32, 5, replace=False)
+    for spot in spots1:
+        row = spot // 32
+        col = spot % 32
+        coords.append((row, col))
+        array[row, col] = 0
+    for spot in spots2:
+        row = spot // 32
+        col = spot % 32
+        coords.append((row, col))
+        array[row, col] = 0
+    return array, coords
+
+def fill_row(array, row, col):
+    val = 0
+    for i in range(col, 32):
+        array[row, i] = val
+        val = val + 1 if val < 9 else 0
+    val = 0
+    for i in range(col - 1, -1, -1):
+        array[row, i] = val
+        val = val + 1 if val < 9 else 0
+
+def fill_column(array, row, col):
+    val = 0
+    for i in range(row, 32):
+        array[i, col] = val
+        val = val + 1 if val < 9 else 0
+    val = 0
+    for i in range(row - 1, -1, -1):
+        array[i, col] = val
+        val = val + 1 if val < 9 else 0
+
+def create_shape_mask(array, is_row=True):
+    mask = np.zeros((32, 32))
+    coords = [(r, c) for r in range(32) for c in range(32) if array[r, c] > 0]
+    if coords:
+        if is_row:
+            min_r, max_r = min(r for r, _ in coords), max(r for r, _ in coords)
+            for r in range(min_r, max_r + 1):
+                cols = [c for cr, c in coords if cr == r]
+                if cols:
+                    min_c, max_c = min(cols), max(cols)
+                    mask[r, min_c:max_c + 1] = 1
+        else:
+            min_c, max_c = min(c for _, c in coords), max(c for _, c in coords)
+            for c in range(min_c, max_c + 1):
+                rows = [r for r, cr in coords if cr == c]
+                if rows:
+                    min_r, max_r = min(rows), max(rows)
+                    mask[min_r:max_r + 1, c] = 1
+    return mask
+
+def calc_crossings_average(array, coords, is_male):
+    crossings = []
+    row_coords = coords[5:] if is_male else coords[5:]
+    col_coords = coords[:5] if is_male else coords[:5]
+    for r_row, c_row in row_coords:
+        for r_col, c_col in col_coords:
+            if r_row == r_col or c_row == c_col:
+                cross_value = array[r_row, c_col] + array[r_col, c_row]
+                crossings.append(cross_value)
+    return np.mean(crossings) if crossings else 0
+
+def calc_total_length(coords):
+    total = 0
+    for i in range(len(coords)):
+        for j in range(i + 1, len(coords)):
+            total += distance.euclidean(coords[i], coords[j])
+    return total
+
+# Create initial 8 agents
+np.random.seed(42)
+agents = []
+for i in range(8):
+    is_male = i < 4
+    array, coords = create_agent(is_male)
+    if is_male:
+        for row, col in coords[:5]: fill_row(array, row, col)
+        for row, col in coords[5:]: fill_column(array, row, col)
+    else:
+        for row, col in coords[:5]: fill_column(array, row, col)
+        for row, col in coords[5:]: fill_row(array, row, col)
+    row_mask = create_shape_mask(array, True)
+    col_mask = create_shape_mask(array, False)
+    row_area = np.sum(row_mask)
+    col_area = np.sum(col_mask)
+    shared_area = np.sum(row_mask * col_mask)
+    row_unique = row_area - shared_area
+    col_unique = col_area - shared_area
+    total_area = 32 * 32
+    combined_area = np.sum(np.logical_or(row_mask, col_mask))
+    remaining_area = total_area - combined_area
+    line_length = calc_total_length(coords)
+    crossings_avg = calc_crossings_average(array, coords, is_male)
+    agents.append({
+        'array': array, 'coords': coords, 'row_mask': row_mask, 'col_mask': col_mask,
+        'row_area': row_area, 'col_area': col_area, 'shared_area': shared_area,
+        'row_unique': row_unique, 'col_unique': col_unique, 'remaining_area': remaining_area,
+        'line_length': line_length, 'crossings_avg': crossings_avg, 'is_male': is_male
+    })
+
+# Function to create child from parents
+def create_child(male_parent, female_parent, is_male_child):
+    array = np.zeros((32, 32))
+    coords = []
+    
+    # Select 5 random spots from each parent
+    male_spots = np.random.choice(len(male_parent['coords']), 5, replace=False)
+    female_spots = np.random.choice(len(female_parent['coords']), 5, replace=False)
+    
+    # Male to male: M, Male to female: z, Female to female: W, Female to male: z
+    for idx in male_spots:
+        coords.append(male_parent['coords'][idx])
+    for idx in female_spots:
+        coords.append(female_parent['coords'][idx])
+    
+    # Apply marks based on child gender
+    if is_male_child:
+        for row, col in coords[:5]:  # From male (M)
+            fill_row(array, row, col)
+        for row, col in coords[5:]:  # From female (z)
+            fill_column(array, row, col)
+    else:
+        for row, col in coords[:5]:  # From male (z)
+            fill_column(array, row, col)
+        for row, col in coords[5:]:  # From female (W)
+            fill_row(array, row, col)
+    
+    # Calculate metrics
+    row_mask = create_shape_mask(array, True)
+    col_mask = create_shape_mask(array, False)
+    row_area = np.sum(row_mask)
+    col_area = np.sum(col_mask)
+    shared_area = np.sum(row_mask * col_mask)
+    row_unique = row_area - shared_area
+    col_unique = col_area - shared_area
+    total_area = 32 * 32
+    combined_area = np.sum(np.logical_or(row_mask, col_mask))
+    remaining_area = total_area - combined_area
+    line_length = calc_total_length(coords)
+    crossings_avg = calc_crossings_average(array, coords, is_male_child)
+    
+    return {
+        'array': array, 'coords': coords, 'row_mask': row_mask, 'col_mask': col_mask,
+        'row_area': row_area, 'col_area': col_area, 'shared_area': shared_area,
+        'row_unique': row_unique, 'col_unique': col_unique, 'remaining_area': remaining_area,
+        'line_length': line_length, 'crossings_avg': crossings_avg, 'is_male': is_male_child
+    }
+
+# Create children from couplings
+children = []
+for i in range(4):  # 4 couples
+    male_parent = agents[i]  # Males are 0-3
+    female_parent = agents[i + 4]  # Females are 4-7
+    
+    # Create one male and one female child per couple
+    male_child = create_child(male_parent, female_parent, True)
+    female_child = create_child(male_parent, female_parent, False)
+    children.append((male_child, female_child))
+
+# Output results for children
+for i, (male_child, female_child) in enumerate(children):
+    print(f"\nCouple {i+1} (Male {i+1} & Female {i+5}):")
+    
+    print(f"  Male Child:")
+    print(f"    M Area: {male_child['row_area']}")
+    print(f"    z Area: {male_child['col_area']}")
+    print(f"    Shared Area: {male_child['shared_area']}")
+    print(f"    M Unique Area: {male_child['row_unique']}")
+    print(f"    z Unique Area: {male_child['col_unique']}")
+    print(f"    Remaining Area: {male_child['remaining_area']}")
+    print(f"    Total Line Length: {male_child['line_length']:.2f}")
+    print(f"    Average of Crossings: {male_child['crossings_avg']:.2f}")
+    
+    print(f"  Female Child:")
+    print(f"    W Area: {female_child['row_area']}")
+    print(f"    z Area: {female_child['col_area']}")
+    print(f"    Shared Area: {female_child['shared_area']}")
+    print(f"    W Unique Area: {female_child['row_unique']}")
+    print(f"    z Unique Area: {female_child['col_unique']}")
+    print(f"    Remaining Area: {female_child['remaining_area']}")
+    print(f"    Total Line Length: {female_child['line_length']:.2f}")
+    print(f"    Average of Crossings: {female_child['crossings_avg']:.2f}")
+
+# Visualization
+fig, axes = plt.subplots(4, 2, figsize=(10, 20))
+for i, (male_child, female_child) in enumerate(children):
+    axes[i, 0].imshow(male_child['array'], cmap='viridis')
+    axes[i, 0].set_title(f"Couple {i+1} Male Child")
+    axes[i, 0].axis('off')
+    axes[i, 1].imshow(female_child['array'], cmap='viridis')
+    axes[i, 1].set_title(f"Couple {i+1} Female Child")
+    axes[i, 1].axis('off')
+plt.tight_layout()
+plt.show()
