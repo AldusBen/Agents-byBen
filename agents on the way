@@ -1,0 +1,336 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.spatial.distance import euclidean
+import math
+
+# Constants
+GENDER_MULTIPLIER = 1.67
+BODY_MULTIPLIER = 1.34
+COST_INCREASE = 1.1
+CONSECUTIVE_BASE = 2
+NON_MATCH_INTELLIGENCE = 8
+FEMALE_MAX_TURNS = 88
+MALE_MAX_TURNS = 248
+COUPLING_DURATION = 3
+
+# Fill functions
+def fill_row(array, row, col):
+    val = 0
+    for i in range(col, 32):
+        array[row, i] = val
+        val = val + 1 if val < 9 else 0
+    val = 0
+    for i in range(col - 1, -1, -1):
+        array[row, i] = val
+        val = val + 1 if val < 9 else 0
+
+def fill_column(array, row, col):
+    val = 0
+    for i in range(row, 32):
+        array[i, col] = val
+        val = val + 1 if val < 9 else 0
+    val = 0
+    for i in range(row - 1, -1, -1):
+        array[i, col] = val
+        val = val + 1 if val < 9 else 0
+
+# Create a single object (plane)
+def create_object(is_male, z_pos, culture_label, male_coords=None, female_coords=None):
+    array = np.zeros((32, 32))
+    coords = []
+    
+    if male_coords is None or female_coords is None:
+        spots1 = np.random.choice(32*32, 5, replace=False)
+        spots2 = np.random.choice(32*32, 5, replace=False)
+        for spot in spots1:
+            row, col = spot // 32, spot % 32
+            coords.append((row, col))
+            array[row, col] = 0
+        for spot in spots2:
+            row, col = spot // 32, spot % 32
+            coords.append((row, col))
+            array[row, col] = 0
+    else:
+        coords = male_coords + female_coords
+        for row, col in coords:
+            array[row, col] = 0
+    
+    if is_male:
+        for row, col in coords[:5]:
+            fill_row(array, row, col)
+        for row, col in coords[5:]:
+            fill_column(array, row, col)
+    else:
+        for row, col in coords[:5]:
+            fill_column(array, row, col)
+        for row, col in coords[5:]:
+            fill_row(array, row, col)
+    
+    gender_marker = 'M' if is_male else 'W'
+    race = [gender_marker]
+    remaining_positions = list(range(1, 9))
+    gender_positions = np.random.choice(remaining_positions, 4, replace=False).tolist()
+    q_positions = [p for p in remaining_positions if p not in gender_positions] + [9]
+    for i in range(1, 10):
+        if i in gender_positions:
+            race.append(gender_marker)
+        elif i in q_positions:
+            race.append('Q')
+    
+    return {
+        'array': array,
+        'coords': coords,
+        'z_pos': z_pos,
+        'race': ''.join(race),
+        'culture': culture_label
+    }
+
+# Shape mask and crossings functions
+def create_shape_mask(array, is_row=True):
+    mask = np.zeros((32, 32))
+    coords = [(r, c) for r in range(32) for c in range(32) if array[r, c] > 0]
+    if coords:
+        if is_row:
+            min_r, max_r = min(r for r, _ in coords), max(r for r, _ in coords)
+            for r in range(min_r, max_r + 1):
+                cols = [c for cr, c in coords if cr == r]
+                if cols:
+                    min_c, max_c = min(cols), max(cols)
+                    mask[r, min_c:max_c + 1] = 1
+        else:
+            min_c, max_c = min(c for _, c in coords), max(c for _, c in coords)
+            for c in range(min_c, max_c + 1):
+                rows = [r for r, cr in coords if cr == c]
+                if rows:
+                    min_r, max_r = min(rows), max(rows)
+                    mask[min_r:max_r + 1, c] = 1
+    return mask
+
+def calc_crossings_average(array, coords, is_male):
+    crossings = []
+    row_coords = coords[5:] if is_male else coords[5:]
+    col_coords = coords[:5] if is_male else coords[:5]
+    for r_row, c_row in row_coords:
+        for r_col, c_col in col_coords:
+            if r_row == r_col or c_row == c_col:
+                cross_value = array[r_row, c_col] + array[r_col, c_row]
+                crossings.append(cross_value)
+    return np.mean(crossings) if crossings else 0
+
+def calc_total_length(coords):
+    total = 0
+    for i in range(len(coords)):
+        for j in range(i + 1, len(coords)):
+            total += euclidean(coords[i], coords[j])
+    return total
+
+# Create a complete agent
+def create_complete_agent(is_male, male_parent=None, female_parent=None):
+    z_positions = sorted(np.random.choice(32, 10, replace=False))
+    culture_options = ['LU', 'LD', 'RU', 'RD', 'UL', 'DL', 'UR', 'DR']
+    culture_order = ['Q'] + np.random.choice(culture_options, 8, replace=False).tolist() + ['M']
+    
+    if male_parent and female_parent:
+        objects = []
+        for i, z in enumerate(z_positions):
+            male_coords = np.random.choice(len(male_parent['objects'][i]['coords']), 5, replace=False)
+            female_coords = np.random.choice(len(female_parent['objects'][i]['coords']), 5, replace=False)
+            male_coords = [male_parent['objects'][i]['coords'][idx] for idx in male_coords]
+            female_coords = [female_parent['objects'][i]['coords'][idx] for idx in female_coords]
+            obj = create_object(is_male, z, culture_order[i], male_coords, female_coords)
+            objects.append(obj)
+    else:
+        objects = [create_object(is_male, z, culture_order[i]) for i, z in enumerate(z_positions)]
+    
+    total_gender_score = 0
+    total_body_score = 0
+    total_shared_area = 0
+    total_gender_cost = 0
+    total_body_cost = 0
+    total_remaining_area = 0
+    total_line_length = 0
+    total_crossings_avg = 0
+    
+    for i, obj in enumerate(objects):
+        row_mask = create_shape_mask(obj['array'], True)
+        col_mask = create_shape_mask(obj['array'], False)
+        gender_area = np.sum(row_mask) * (GENDER_MULTIPLIER if (is_male and 'M' in obj['race']) or (not is_male and 'W' in obj['race']) else 1)
+        body_area = np.sum(col_mask) * (BODY_MULTIPLIER if obj['culture'] == 'Q' else 1)
+        shared_area = np.sum(row_mask * col_mask)
+        gender_unique = gender_area - shared_area
+        body_unique = body_area - shared_area
+        remaining_area = 32 * 32 - np.sum(np.logical_or(row_mask, col_mask))
+        
+        next_z = objects[i + 1]['z_pos'] if i < 9 else z_positions[-1]
+        spaces = next_z - obj['z_pos'] - 1 if i < 9 else 0
+        total_gender_cost += gender_unique * spaces
+        total_body_cost += body_unique * spaces
+        
+        total_gender_score += gender_area
+        total_body_score += body_area
+        total_shared_area += shared_area
+        total_remaining_area += remaining_area
+        total_line_length += calc_total_length(obj['coords'])
+        total_crossings_avg += calc_crossings_average(obj['array'], obj['coords'], is_male)
+    
+    cost_factor = 1.0
+    if z_positions[0] > 0:
+        cost_factor *= COST_INCREASE ** z_positions[0]
+    if z_positions[-1] < 31:
+        cost_factor *= COST_INCREASE ** (31 - z_positions[-1])
+    
+    total_cost = (total_gender_cost + total_body_cost - total_shared_area) * cost_factor
+    coop_score = 0
+    consecutive = 0
+    for i in range(1, 9):
+        if i < 8 and objects[i]['culture'] == objects[i-1]['culture'] == objects[i+1]['culture']:
+            consecutive += 1
+            coop_score = total_remaining_area * BODY_MULTIPLIER * (math.log2(consecutive + 1) if consecutive > 1 else 1)
+        else:
+            consecutive = 0
+    
+    w_count = sum(obj['race'].count('W') for obj in objects)
+    m_count = sum(obj['race'].count('M') for obj in objects)
+    imbalance = abs(w_count - m_count)
+    difficulty = max(0, 10 - imbalance)
+    
+    intelligence = (total_crossings_avg / 10) * (1 if coop_score > 0 else NON_MATCH_INTELLIGENCE)
+    fitness = total_line_length
+    life_score = total_body_score * 2
+    
+    max_turns = MALE_MAX_TURNS if is_male else FEMALE_MAX_TURNS
+    turns_remaining = max_turns
+    can_couple = True
+    coupling_turns_left = 0
+    
+    return {
+        'objects': objects,
+        'z_positions': z_positions,
+        'gender_score': total_gender_score,
+        'body_score': total_body_score,
+        'total_cost': total_cost,
+        'remaining_area': total_remaining_area,
+        'coop_score': coop_score,
+        'intelligence': intelligence,
+        'fitness': fitness,
+        'life_score': life_score,
+        'is_male': is_male,
+        'difficulty': difficulty,
+        'turns_remaining': turns_remaining,
+        'can_couple': can_couple,
+        'coupling_turns_left': coupling_turns_left
+    }
+
+# Set random seed
+np.random.seed(42)
+
+# Create 10 initial agents (5 male, 5 female)
+initial_agents = [create_complete_agent(is_male) for is_male in [True]*5 + [False]*5]
+
+# Pair into 5 couples and create 4 children each
+children = []
+for i in range(5):
+    male_parent = initial_agents[i]
+    female_parent = initial_agents[i + 5]
+    for _ in range(2):  # 2 males
+        children.append(create_complete_agent(True, male_parent, female_parent))
+    for _ in range(2):  # 2 females
+        children.append(create_complete_agent(False, male_parent, female_parent))
+
+# Collect stats
+parent_stats = {
+    'intelligence': [agent['intelligence'] for agent in initial_agents],
+    'fitness': [agent['fitness'] for agent in initial_agents],
+    'gender_score': [agent['gender_score'] for agent in initial_agents],
+    'body_score': [agent['body_score'] for agent in initial_agents]
+}
+child_stats = {
+    'intelligence': [child['intelligence'] for child in children],
+    'fitness': [child['fitness'] for child in children],
+    'gender_score': [child['gender_score'] for child in children],
+    'body_score': [child['body_score'] for child in children]
+}
+
+# Text output
+print("\nInitial Agents:")
+for i, agent in enumerate(initial_agents):
+    gender = "Male" if agent['is_male'] else "Female"
+    marker = "M" if agent['is_male'] else "W"
+    print(f"Agent {i+1} ({gender}): Intelligence={agent['intelligence']:.2f}, Fitness={agent['fitness']:.2f}, {marker} Score={agent['gender_score']:.2f}, Q Score={agent['body_score']:.2f}")
+
+print("\nChildren:")
+for i, child in enumerate(children):
+    gender = "Male" if child['is_male'] else "Female"
+    marker = "M" if child['is_male'] else "W"
+    parent_pair = i // 4 + 1
+    print(f"Child {i+1} ({gender}, Couple {parent_pair}): Intelligence={child['intelligence']:.2f}, Fitness={child['fitness']:.2f}, {marker} Score={child['gender_score']:.2f}, Q Score={child['body_score']:.2f}")
+
+print("\nDesirability Analysis:")
+for metric in ['intelligence', 'fitness', 'gender_score', 'body_score']:
+    parent_avg = np.mean(parent_stats[metric])
+    child_avg = np.mean(child_stats[metric])
+    parent_std = np.std(parent_stats[metric])
+    child_std = np.std(child_stats[metric])
+    print(f"{metric.capitalize()}:")
+    print(f"  Parents - Avg: {parent_avg:.2f}, Std: {parent_std:.2f}")
+    print(f"  Children - Avg: {child_avg:.2f}, Std: {child_std:.2f}")
+
+# Graphical output
+fig = plt.figure(figsize=(15, 10))
+
+# Bar plot for averages
+metrics = ['intelligence', 'fitness', 'gender_score', 'body_score']
+parent_means = [np.mean(parent_stats[m]) for m in metrics]
+child_means = [np.mean(child_stats[m]) for m in metrics]
+x = np.arange(len(metrics))
+width = 0.35
+
+plt.subplot(2, 1, 1)
+plt.bar(x - width/2, parent_means, width, label='Parents', color='skyblue')
+plt.bar(x + width/2, child_means, width, label='Children', color='salmon')
+plt.xlabel('Metrics')
+plt.ylabel('Average Value')
+plt.title('Average Metrics: Parents vs Children')
+plt.xticks(x, [m.capitalize() for m in metrics])
+plt.legend()
+
+# Scatter plots for individual values
+plt.subplot(2, 2, 3)
+plt.scatter(range(1, 11), parent_stats['intelligence'], label='Parents', color='skyblue')
+plt.scatter(range(1, 21), child_stats['intelligence'], label='Children', color='salmon', alpha=0.6)
+plt.xlabel('Agent/Child Number')
+plt.ylabel('Intelligence')
+plt.title('Intelligence Distribution')
+plt.legend()
+
+plt.subplot(2, 2, 4)
+plt.scatter(range(1, 11), parent_stats['fitness'], label='Parents', color='skyblue')
+plt.scatter(range(1, 21), child_stats['fitness'], label='Children', color='salmon', alpha=0.6)
+plt.xlabel('Agent/Child Number')
+plt.ylabel('Fitness')
+plt.title('Fitness Distribution')
+plt.legend()
+
+plt.tight_layout()
+plt.show()
+
+# Additional figure for gender and body scores
+fig2 = plt.figure(figsize=(15, 5))
+plt.subplot(1, 2, 1)
+plt.scatter(range(1, 11), parent_stats['gender_score'], label='Parents', color='skyblue')
+plt.scatter(range(1, 21), child_stats['gender_score'], label='Children', color='salmon', alpha=0.6)
+plt.xlabel('Agent/Child Number')
+plt.ylabel('Gender Score (M/W)')
+plt.title('Gender Score Distribution')
+plt.legend()
+
+plt.subplot(1, 2, 2)
+plt.scatter(range(1, 11), parent_stats['body_score'], label='Parents', color='skyblue')
+plt.scatter(range(1, 21), child_stats['body_score'], label='Children', color='salmon', alpha=0.6)
+plt.xlabel('Agent/Child Number')
+plt.ylabel('Body Score (Q)')
+plt.title('Body Score Distribution')
+plt.legend()
+
+plt.tight_layout()
+plt.show()
