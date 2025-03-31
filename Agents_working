@@ -1,0 +1,168 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.spatial import distance
+
+# Function to initialize an agent array
+def create_agent(is_male):
+    array = np.zeros((32, 32))
+    coords = []
+    
+    # Place 5 spots from each "parent"
+    spots1 = np.random.choice(32*32, 5, replace=False)  # From male
+    spots2 = np.random.choice(32*32, 5, replace=False)  # From female
+    
+    for spot in spots1:  # From male
+        row = spot // 32
+        col = spot % 32
+        coords.append((row, col))
+        array[row, col] = 0
+        
+    for spot in spots2:  # From female
+        row = spot // 32
+        col = spot % 32
+        coords.append((row, col))
+        array[row, col] = 0
+    
+    return array, coords
+
+# Fill functions - now filling entire row/column
+def fill_row(array, row, col):
+    # Fill right
+    val = 0
+    for i in range(col, 32):
+        array[row, i] = val
+        val = val + 1 if val < 9 else 0
+    # Fill left
+    val = 0
+    for i in range(col - 1, -1, -1):
+        array[row, i] = val
+        val = val + 1 if val < 9 else 0
+
+def fill_column(array, row, col):
+    # Fill down
+    val = 0
+    for i in range(row, 32):
+        array[i, col] = val
+        val = val + 1 if val < 9 else 0
+    # Fill up
+    val = 0
+    for i in range(row - 1, -1, -1):
+        array[i, col] = val
+        val = val + 1 if val < 9 else 0
+
+# Shape mask function
+def create_shape_mask(array, is_row=True):
+    mask = np.zeros((32, 32))
+    coords = [(r, c) for r in range(32) for c in range(32) if array[r, c] > 0]
+    if coords:
+        if is_row:
+            min_r, max_r = min(r for r, _ in coords), max(r for r, _ in coords)
+            for r in range(min_r, max_r + 1):
+                cols = [c for cr, c in coords if cr == r]
+                if cols:
+                    min_c, max_c = min(cols), max(cols)
+                    mask[r, min_c:max_c + 1] = 1
+        else:
+            min_c, max_c = min(c for _, c in coords), max(c for _, c in coords)
+            for c in range(min_c, max_c + 1):
+                rows = [r for r, cr in coords if cr == c]
+                if rows:
+                    min_r, max_r = min(rows), max(rows)
+                    mask[min_r:max_r + 1, c] = 1
+    return mask
+
+# Calculate crossings average
+def calc_crossings_average(array, coords, is_male):
+    crossings = []
+    row_coords = coords[5:] if is_male else coords[5:]  # M or W
+    col_coords = coords[:5] if is_male else coords[:5]  # z
+    for r_row, c_row in row_coords:
+        for r_col, c_col in col_coords:
+            if r_row == r_col or c_row == c_col:  # Check if they share row or column
+                cross_value = array[r_row, c_col] + array[r_col, c_row]
+                crossings.append(cross_value)
+    return np.mean(crossings) if crossings else 0
+
+# Calculate total length
+def calc_total_length(coords):
+    total = 0
+    for i in range(len(coords)):
+        for j in range(i + 1, len(coords)):
+            total += distance.euclidean(coords[i], coords[j])
+    return total
+
+# Set random seed for reproducibility
+np.random.seed(42)
+
+# Create 8 agents
+agents = []
+for i in range(8):
+    is_male = i < 4
+    array, coords = create_agent(is_male)
+    
+    # Apply filling based on gender
+    if is_male:
+        for row, col in coords[:5]:  # M from male
+            fill_row(array, row, col)
+        for row, col in coords[5:]:  # z from female
+            fill_column(array, row, col)
+    else:
+        for row, col in coords[:5]:  # z from male
+            fill_column(array, row, col)
+        for row, col in coords[5:]:  # W from female
+            fill_row(array, row, col)
+    
+    # Calculate shapes and areas
+    row_mask = create_shape_mask(array, True)
+    col_mask = create_shape_mask(array, False)
+    row_area = np.sum(row_mask)
+    col_area = np.sum(col_mask)
+    shared_area = np.sum(row_mask * col_mask)
+    row_unique = row_area - shared_area
+    col_unique = col_area - shared_area
+    total_area = 32 * 32
+    combined_area = np.sum(np.logical_or(row_mask, col_mask))
+    remaining_area = total_area - combined_area
+    line_length = calc_total_length(coords)
+    crossings_avg = calc_crossings_average(array, coords, is_male)
+    
+    agents.append({
+        'array': array,
+        'coords': coords,
+        'row_mask': row_mask,
+        'col_mask': col_mask,
+        'row_area': row_area,
+        'col_area': col_area,
+        'shared_area': shared_area,
+        'row_unique': row_unique,
+        'col_unique': col_unique,
+        'remaining_area': remaining_area,
+        'line_length': line_length,
+        'crossings_avg': crossings_avg,
+        'is_male': is_male
+    })
+
+# Output results
+for i, agent in enumerate(agents):
+    gender = "Male" if agent['is_male'] else "Female"
+    mark = "M" if agent['is_male'] else "W"
+    print(f"\nAgent {i+1} ({gender}):")
+    print(f"{mark} Area: {agent['row_area']}")
+    print(f"z Area: {agent['col_area']}")
+    print(f"Shared Area: {agent['shared_area']}")
+    print(f"{mark} Unique Area: {agent['row_unique']}")
+    print(f"z Unique Area: {agent['col_unique']}")
+    print(f"Remaining Area: {agent['remaining_area']}")
+    print(f"Total Line Length: {agent['line_length']:.2f}")
+    print(f"Average of Crossings: {agent['crossings_avg']:.2f}")
+
+# Visualization
+fig, axes = plt.subplots(2, 4, figsize=(20, 10))
+for i, agent in enumerate(agents):
+    ax = axes[i // 4, i % 4]
+    ax.imshow(agent['array'], cmap='viridis')
+    gender = "Male" if agent['is_male'] else "Female"
+    ax.set_title(f"Agent {i+1} ({gender})")
+    ax.axis('off')
+plt.tight_layout()
+plt.show()
