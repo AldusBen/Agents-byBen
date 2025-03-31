@@ -1,0 +1,101 @@
+import numpy as np
+from scipy.spatial.distance import euclidean
+
+def fill_row_col(array, row, col, is_row):
+    start, end, step = (col, 32, 1) if is_row else (row, 32, 1)
+    for i in range(start, end, step):
+        array[row if is_row else i, col if is_row else i] = (array[row if is_row else i, col if is_row else i] + 1) % 10
+
+def create_object(is_male, z_pos, race_char):
+    array = np.zeros((32, 32), dtype=int)  # Use integer type for efficiency
+    coords = np.random.choice(32 * 32, 10, replace=False)  # Generate random unique spots
+    row_coords, col_coords = coords[:5], coords[5:]
+
+    if is_male:
+        if race_char == 'M':
+            for row, col in row_coords:
+                fill_row_col(array, row, col, True)
+            for row, col in col_coords:
+                fill_row_col(array, row, col, False)
+        else:  # Q
+            for row, col in row_coords:
+                fill_row_col(array, row, col, False)
+            for row, col in col_coords:
+                fill_row_col(array, row, col, True)
+    else:
+        if race_char == 'W':
+            for row, col in row_coords:
+                fill_row_col(array, row, col, False)
+            for row, col in col_coords:
+                fill_row_col(array, row, col, True)
+        else:  # Q
+            for row, col in row_coords:
+                fill_row_col(array, row, col, True)
+            for row, col in col_coords:
+                fill_row_col(array, row, col, False)
+
+    return {
+        'array': array,
+        'coords': coords,
+        'z_pos': z_pos,
+        'race_char': race_char
+    }
+
+def create_shape_mask(array):
+    coords = np.argwhere(array > 0)
+    if coords.size:
+        min_r, max_r = coords[:, 0].min(), coords[:, 0].max()
+        min_c, max_c = coords[:, 1].min(), coords[:, 1].max()
+        return np.ones((max_r - min_r + 1, max_c - min_c + 1), dtype=bool)
+    else:
+        return np.zeros((32, 32), dtype=bool)
+
+def calc_crossings_average(array, coords, is_male, race_char):
+    row_coords = coords[5:] if (is_male and race_char == 'M') or (not is_male and race_char == 'W') else coords[:5]
+    col_coords = coords[:5] if (is_male and race_char == 'M') or (not is_male and race_char == 'W') else coords[5:]
+    crossings = [array[r_row, c_col] + array[r_col, c_row] for r_row, c_row in row_coords for r_col, c_col in col_coords if r_row == r_col or c_row == c_col]
+    return np.mean(crossings) if crossings else 0
+
+def calc_total_length(coords):
+    return sum(euclidean(coords[i], coords[j]) for i in range(len(coords)) for j in range(i + 1, len(coords)))
+
+def create_complete_agent(is_male):
+    z_positions = sorted(np.random.choice(32, 10, replace=False))
+    gender_marker = 'M' if is_male else 'W'
+    race = [gender_marker] + ['M' if i in np.random.choice(range(1, 9), 4, replace=False) else 'Q' for i in range(1, 10)]
+    race = ''.join(race)
+    objects = [create_object(is_male, z, race[i]) for i, z in enumerate(z_positions)]
+
+    stats = {
+        'row_area': 0, 'col_area': 0, 'shared_area': 0,
+        'row_unique': 0, 'col_unique': 0, 'remaining_area': 0,
+        'line_length': 0, 'crossings_avg': 0
+    }
+
+    for obj in objects:
+        row_mask = create_shape_mask(obj['array'])
+        col_mask = create_shape_mask(obj['array'].T)
+        row_area, col_area = row_mask.sum(), col_mask.sum()
+        shared_area = (row_mask & col_mask).sum()
+        row_unique, col_unique = row_area - shared_area, col_area - shared_area
+        total_area = 32 * 32
+        combined_area = (row_mask | col_mask).sum()
+        remaining_area = total_area - combined_area
+        line_length = calc_total_length(obj['coords'])
+        crossings_avg = calc_crossings_average(obj['array'], obj['coords'], is_male, obj['race_char'])
+
+        stats['row_area'] += row_area
+        stats['col_area'] += col_area
+        stats['shared_area'] += shared_area
+        stats['row_unique'] += row_unique
+        stats['col_unique'] += col_unique
+        stats['remaining_area'] += remaining_area
+        stats['line_length'] += line_length
+        stats['crossings_avg'] += crossings_avg
+
+    stats['crossings_avg'] /= 10
+    stats['is_male'] = is_male
+    return {'objects': objects, 'z_positions': z_positions, 'race': race, **stats}
+
+np.random.seed(42)
+agents = [create_complete_agent(is_male) for is_male in [True] * 4 + [False] * 4]
