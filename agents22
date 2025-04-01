@@ -1,0 +1,100 @@
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+import numpy as np
+
+class Agent:
+    def __init__(self, is_male, parent1=None, parent2=None, z_positions=None):
+        self.is_male = is_male
+        self.gender_marker = 'M' if is_male else 'W'
+        self.z_positions = z_positions if z_positions is not None else sorted(np.random.choice(32, 10, replace=False))
+        self.race = self._generate_race(parent1, parent2)
+        self.objects = self._create_objects(parent1, parent2)
+        self.metrics = self._calculate_metrics()
+        self.life_points = np.random.uniform(330, 440) if is_male else 330
+        self.coupling_ability = 244 if is_male else 88
+        self.coupling_reduction = 0
+        self.pregnant = False
+        self.ancestors = []
+        self.year = 0
+        self.biome = ''.join(np.random.choice([str(i) for i in range(10)], np.random.randint(3, 6)))
+        self.x = np.random.randint(0, 32)
+        self.y = np.random.randint(0, 32)
+
+    def _generate_race(self, parent1, parent2):
+        # ... (same as before)
+
+    def _create_objects(self, parent1, parent2):
+        # ... (same as before)
+
+    def _calculate_metrics(self):
+        # ... (same as before)
+
+    def evaluate_tile(self, tile):
+        # Implement evaluation logic here
+        pass
+
+    def evaluate_surrounding_tiles(self):
+        # Implement evaluation logic here
+        pass
+
+    def evaluate_other_agents(self, agents):
+        # Implement evaluation logic here
+        pass
+
+    def couple(self, partner):
+        # Implement coupling logic here
+        pass
+
+    def update_life_points(self):
+        # Implement life points update logic here
+        pass
+
+    def update_coupling_ability(self):
+        # Implement coupling ability update logic here
+        pass
+
+    def update_pregnancy(self):
+        # Implement pregnancy update logic here
+        pass
+
+    def update_biome_reward(self, tile):
+        # Implement biome reward logic here
+        pass
+
+    def update_year(self):
+        # Implement year update logic here
+        pass
+
+class Environment:
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+        self.agents = []
+        self.tiles = np.zeros((height, width))
+
+    def add_agent(self, agent):
+        self.agents.append(agent)
+        self.tiles[agent.y, agent.x] = 1
+
+    def update(self):
+        # Implement environment update logic here
+        pass
+
+    def visualize(self):
+        fig, ax = plt.subplots()
+        ax.imshow(self.tiles, cmap='viridis')
+        for agent in self.agents:
+            rect = patches.Rectangle((agent.x, agent.y), 1, 1, fill=True)
+            ax.add_patch(rect)
+        plt.show()
+
+# Initialize environment and agents
+env = Environment(32, 32)
+for _ in range(100):
+    is_male = np.random.choice([True, False])
+    env.add_agent(Agent(is_male))
+
+# Run simulation
+for _ in range(100):
+    env.update()
+    env.visualize()
