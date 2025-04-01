@@ -1,0 +1,248 @@
+import random
+import math
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+
+# Tile Generation (Adapted for 32x32)
+BIOMES = {
+    "Ocean": "Blue",
+    "Forest": "Green",
+    "Desert": "Sandy Yellow",
+    "Tundra": "White",
+    "Grassland": "Light Green",
+    "Mountain": "Gray",
+    "Wetland": "Teal",
+    "Savanna": "Golden Brown"
+}
+
+def generate_race_label():
+    base = random.choice(["W", "M"])
+    middle = [base] * 4 + ["Q"] * 4
+    random.shuffle(middle)
+    return base + "".join(middle) + "Q"
+
+def generate_numeric_string():
+    digits = list("0123456789")
+    random.shuffle(digits)
+    return "".join(digits)
+
+def generate_numeric_strings():
+    num_strings = random.choice([3, 4, 5])
+    return [generate_numeric_string() for _ in range(num_strings)]
+
+def generate_culture_label(race_label):
+    base = race_label[0]
+    return f"[Q,LU,LD,RU,RD,UL,UR,DL,DR,9{base}]"
+
+def generate_tiles(width, height):
+    total_tiles = width * height
+    ocean_tiles = math.ceil(total_tiles * 0.65)
+    land_tiles = total_tiles - ocean_tiles
+    land_biome_count = land_tiles // (len(BIOMES) - 1)
+    low_resource_count = math.ceil(total_tiles * 0.80)
+    high_resource_count = total_tiles - low_resource_count
+
+    biomes_list = ["Ocean"] * ocean_tiles
+    for biome in list(BIOMES.keys())[1:]:
+        biomes_list.extend([biome] * land_biome_count)
+    random.shuffle(biomes_list)
+    biomes_list = biomes_list[:total_tiles]
+
+    resources = [random.randint(0, 336) for _ in range(low_resource_count)]
+    resources.extend([random.randint(337, 1680) for _ in range(high_resource_count)])
+    random.shuffle(resources)
+
+    tiles = {}
+    for y in range(height):
+        for x in range(width):
+            idx = y * width + x
+            race_label = generate_race_label()
+            tiles[(x, y)] = {
+                "Race Label": race_label,
+                "Numeric Strings": generate_numeric_strings(),
+                "Biome": f"{biomes_list[idx]} ({BIOMES[biomes_list[idx]]})",
+                "Resource Value": resources[idx],
+                "Culture Label": generate_culture_label(race_label)
+            }
+    return tiles
+
+# Agent Class
+class Agent:
+    def __init__(self, is_male, parent1=None, parent2=None, z_positions=None):
+        self.is_male = is_male
+        self.gender_marker = 'M' if is_male else 'W'
+        self.z_positions = z_positions if z_positions is not None else sorted(np.random.choice(32, 10, replace=False))
+        self.race = self._generate_race(parent1, parent2)
+        self.objects = self._create_objects(parent1, parent2)
+        self.metrics = self._calculate_metrics()
+        self.life_points = np.random.uniform(330, 440) if is_male else 330
+        self.coupling_ability = 244 if is_male else 88
+        self.coupling_reduction = 0
+        self.pregnant = False
+        self.ancestors = [] if not parent1 else [parent1, parent2]
+        self.year = 0
+        self.biome = ''.join(np.random.choice([str(i) for i in range(10)], np.random.randint(3, 6)))
+        self.x = np.random.randint(0, 32)
+        self.y = np.random.randint(0, 32)
+
+    def _generate_race(self, parent1, parent2):
+        if parent1 and parent2:
+            return random.choice([parent1.race, parent2.race])
+        return generate_race_label()
+
+    def _create_objects(self, parent1, parent2):
+        return generate_numeric_strings()
+
+    def _calculate_metrics(self):
+        return {"strength": random.randint(50, 100), "speed": random.randint(30, 80)}
+
+    def evaluate_tile(self, tile):
+        resource = tile["Resource Value"]
+        biome = tile["Biome"].split(" (")[0]
+        score = resource / 1680 * 100
+        if biome in ["Forest", "Grassland", "Savanna"]:
+            score += 20
+        elif biome in ["Desert", "Tundra", "Ocean"]:
+            score -= 10
+        return min(max(score, 0), 100)
+
+    def evaluate_surrounding_tiles(self, env):
+        total_score = 0
+        count = 0
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                if dx == 0 and dy == 0:
+                    continue
+                nx, ny = self.x + dx, self.y + dy
+                if 0 <= nx < env.width and 0 <= ny < env.height:
+                    total_score += self.evaluate_tile(env.tiles[(nx, ny)])
+                    count += 1
+        return total_score / count if count > 0 else 0
+
+    def evaluate_other_agents(self, agents):
+        compatible = [a for a in agents if a.is_male != self.is_male and a.coupling_ability > 0 and not a.pregnant and abs(a.x - self.x) <= 1 and abs(a.y - self.y) <= 1]
+        if not compatible:
+            return None
+        return max(compatible, key=lambda a: a.metrics["strength"] + a.metrics["speed"])
+
+    def couple(self, partner):
+        if self.is_male and partner and not partner.pregnant and self.coupling_ability > 0 and partner.coupling_ability > 0:
+            partner.pregnant = True
+            self.coupling_ability -= 50
+            partner.coupling_ability -= 20
+            return Agent(random.choice([True, False]), self, partner)
+        return None
+
+    def update_life_points(self, tile):
+        biome = tile["Biome"].split(" (")[0]
+        self.life_points -= 5  # Aging
+        if biome in ["Ocean", "Desert", "Tundra"]:
+            self.life_points -= 3
+        elif biome in ["Forest", "Grassland", "Savanna"]:
+            self.life_points += tile["Resource Value"] * 0.01
+        self.life_points = max(self.life_points, 0)
+
+    def update_coupling_ability(self):
+        if self.coupling_ability > 0:
+            self.coupling_reduction += 1
+            if self.coupling_reduction >= 5:
+                self.coupling_ability -= 10
+                self.coupling_reduction = 0
+        self.coupling_ability = max(self.coupling_ability, 0)
+
+    def update_pregnancy(self):
+        if self.pregnant:
+            self.year += 1
+            if self.year >= 2:
+                self.pregnant = False
+                self.year = 0
+
+    def update_biome_reward(self, tile):
+        score = self.evaluate_tile(tile)
+        self.life_points += score * 0.05  # Small reward
+
+    def update_year(self):
+        self.year += 1
+        if self.year > 20:
+            self.life_points = 0
+
+# Environment Class
+class Environment:
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+        self.agents = []
+        self.tiles = generate_tiles(width, height)
+        self.grid = np.zeros((height, width))
+
+    def add_agent(self, agent):
+        self.agents.append(agent)
+        self.grid[agent.y, agent.x] = 1
+
+    def update(self):
+        new_agents = []
+        for agent in self.agents[:]:
+            tile = self.tiles[(agent.x, agent.y)]
+            agent.update_life_points(tile)
+            agent.update_coupling_ability()
+            agent.update_pregnancy()
+            agent.update_biome_reward(tile)
+            agent.update_year()
+
+            if agent.life_points <= 0:
+                self.agents.remove(agent)
+                self.grid[agent.y, agent.x] = 0
+                continue
+
+            partner = agent.evaluate_other_agents(self.agents)
+            child = agent.couple(partner)
+            if child:
+                child.x = agent.x
+                child.y = agent.y
+                new_agents.append(child)
+
+            # Move to better tile
+            current_score = agent.evaluate_tile(tile)
+            surrounding_score = agent.evaluate_surrounding_tiles(self)
+            if surrounding_score > current_score:
+                for dx in [-1, 0, 1]:
+                    for dy in [-1, 0, 1]:
+                        nx, ny = agent.x + dx, agent.y + dy
+                        if 0 <= nx < self.width and 0 <= ny < self.height and self.grid[ny, nx] == 0:
+                            self.grid[agent.y, agent.x] = 0
+                            agent.x, agent.y = nx, ny
+                            self.grid[ny, nx] = 1
+                            break
+                    else:
+                        continue
+                    break
+
+        for new_agent in new_agents:
+            self.add_agent(new_agent)
+
+    def visualize(self):
+        fig, ax = plt.subplots()
+        biome_colors = {b: i for i, b in enumerate(BIOMES.keys())}
+        display_grid = np.zeros((self.height, self.width))
+        for y in range(self.height):
+            for x in range(self.width):
+                biome = self.tiles[(x, y)]["Biome"].split(" (")[0]
+                display_grid[y, x] = biome_colors[biome]
+        ax.imshow(display_grid, cmap='tab10')
+        for agent in self.agents:
+            rect = patches.Rectangle((agent.x - 0.5, agent.y - 0.5), 1, 1, linewidth=1, edgecolor='black', facecolor='none')
+            ax.add_patch(rect)
+        plt.title(f"Step: {step}, Agents: {len(self.agents)}")
+        plt.show()
+
+# Run Simulation
+env = Environment(32, 32)
+for _ in range(100):
+    is_male = np.random.choice([True, False])
+    env.add_agent(Agent(is_male))
+
+for step in range(100):
+    env.update()
+    if step % 10 == 0:  # Visualize every 10 steps
+        env.visualize()
